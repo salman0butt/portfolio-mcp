@@ -55,10 +55,10 @@ async function runTool<T>(operation: () => Promise<T> | T) {
 
 export function createPortfolioMcpServer() {
   const server = new McpServer(
-    { name: 'salman-portfolio-mcp', version: '3.0.0' },
+    { name: 'salman-portfolio-mcp', version: '3.0.1' },
     {
       instructions:
-        'Manage Salman Butt portfolio engineering articles and blog images. Preserve factual content, prefer drafts when review is appropriate, and only use destructive tools when the user explicitly asks for deletion.',
+        'Manage Salman Butt portfolio engineering articles and blog images. Preserve factual content, prefer drafts when review is appropriate, and only overwrite, unpublish, replace, or delete content when the user explicitly intends that change.',
     },
   );
 
@@ -149,8 +149,8 @@ export function createPortfolioMcpServer() {
         .strict(),
       annotations: {
         readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
         openWorldHint: false,
       },
     },
@@ -178,7 +178,7 @@ export function createPortfolioMcpServer() {
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
-        idempotentHint: true,
+        idempotentHint: false,
         openWorldHint: false,
       },
     },
@@ -199,8 +199,8 @@ export function createPortfolioMcpServer() {
       inputSchema: z.object({ slug: slugSchema }).strict(),
       annotations: {
         readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
         openWorldHint: false,
       },
     },
@@ -260,7 +260,7 @@ export function createPortfolioMcpServer() {
         .strict(),
       annotations: {
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: true,
         openWorldHint: false,
       },
