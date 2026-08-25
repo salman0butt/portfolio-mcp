@@ -1,6 +1,6 @@
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { getAppConfig, loadLocalEnvFile } from './config.js';
-import { createPortfolioMcpServer } from './server.js';
+import { createPortfolioMcpServer } from './mcpFactory.js';
 
 async function main() {
   loadLocalEnvFile();
