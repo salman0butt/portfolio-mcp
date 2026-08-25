@@ -1,11 +1,11 @@
 {
   "name": "portfolio-mcp",
-  "version": "1.0.2",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "description": "Standalone MCP server for managing the Supabase-backed portfolio engineering blog.",
   "engines": {
-    "node": "24.x"
+    "node": ">=22"
   },
   "scripts": {
     "dev": "tsx watch src/http.ts",
