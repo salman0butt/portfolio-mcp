@@ -139,7 +139,7 @@ export async function mcpVercelHandler(request: Request) {
     }
   }
 
-  const response = await mcpHandler(request);
+  const response = await mcpHandler.fetch(request);
   const responseHeaders = new Headers(response.headers);
   for (const [name, value] of headers) responseHeaders.set(name, value);
 
