@@ -16,13 +16,14 @@ function notFound() {
 }
 
 /**
- * Vercel application server entrypoint.
+ * Shared Web Request router used by tests and non-file-system entrypoints.
  *
- * Vercel detects src/server.ts and requires its default export to be a
- * callable/server. Keep MCP tool registration in mcpFactory.ts so this file
- * remains an HTTP routing boundary rather than an MCP factory module.
+ * Do not rename this file to src/server.ts. Vercel auto-detects
+ * src/server.{js,ts,mjs,cjs} as a whole-project server entrypoint, which
+ * bypasses the intended /api Vercel Functions and can produce an invalid
+ * server export at runtime.
  */
-export default async function server(request: Request): Promise<Response> {
+export default async function requestRouter(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const pathname = url.pathname;
 
