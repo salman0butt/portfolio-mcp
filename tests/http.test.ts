@@ -31,6 +31,43 @@ async function listenOnEphemeralPort(server: ReturnType<typeof createPortfolioHt
   return `http://127.0.0.1:${address.port}`;
 }
 
+test('liveness stays available even when MCP environment configuration is invalid', async (t) => {
+  const fakeHandler: NodeMcpRequestHandler = async (_req, res) => {
+    res.statusCode = 200;
+    res.end('ok');
+  };
+  const server = createPortfolioHttpServer(
+    () => {
+      throw new Error('PORTFOLIO_MCP_TOKEN is not configured.');
+    },
+    fakeHandler,
+  );
+  t.after(() => closeNodeServer(server));
+  const baseUrl = await listenOnEphemeralPort(server);
+
+  const root = await fetch(`${baseUrl}/`);
+  assert.equal(root.status, 200);
+  assert.match(await root.text(), /portfolio-mcp/);
+
+  const health = await fetch(`${baseUrl}/healthz`);
+  assert.equal(health.status, 200);
+  assert.deepEqual(await health.json(), {
+    ok: true,
+    service: 'portfolio-mcp',
+    transport: 'streamable-http',
+  });
+
+  const ready = await fetch(`${baseUrl}/readyz`);
+  assert.equal(ready.status, 503);
+  const readiness = await ready.json() as { ready: boolean; error: string };
+  assert.equal(readiness.ready, false);
+  assert.match(readiness.error, /not configured/);
+
+  const mcp = await fetch(`${baseUrl}/mcp`, { method: 'GET' });
+  assert.equal(mcp.status, 503);
+  assert.match(await mcp.text(), /not configured/);
+});
+
 test('HTTP wrapper enforces auth, modern MCP CORS headers, and body limits', async (t) => {
   const fakeHandler: NodeMcpRequestHandler = async (_req, res, parsedBody) => {
     res.statusCode = 200;
