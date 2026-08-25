@@ -80,28 +80,30 @@ test('Vercel MCP route enforces readiness and authentication', async () => {
     );
     assert.equal(unauthorized.status, 401);
 
-    const response = await mcpVercelHandler(
-      new Request(`https://portfolio.example/mcp?token=${'u'.repeat(64)}`, {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json, text/event-stream',
-          'Content-Type': 'application/json',
-          'Mcp-Protocol-Version': '2025-06-18',
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'tools/list',
-          params: {},
+    for (const queryToken of ['u'.repeat(64), 'b'.repeat(64)]) {
+      const response = await mcpVercelHandler(
+        new Request(`https://portfolio.example/mcp?token=${queryToken}`, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json, text/event-stream',
+            'Content-Type': 'application/json',
+            'Mcp-Protocol-Version': '2025-06-18',
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/list',
+            params: {},
+          }),
         }),
-      }),
-    );
+      );
 
-    assert.equal(response.status, 200);
-    const body = await response.text();
-    assert.match(body, /list_blog_posts/);
-    assert.match(body, /create_blog_post/);
-    assert.match(body, /publish_blog_post/);
+      assert.equal(response.status, 200);
+      const body = await response.text();
+      assert.match(body, /list_blog_posts/);
+      assert.match(body, /create_blog_post/);
+      assert.match(body, /publish_blog_post/);
+    }
   } finally {
     restoreEnv(snapshot);
   }

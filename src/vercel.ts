@@ -45,10 +45,16 @@ function corsHeaders(request: Request, config: McpHttpConfig) {
   return headers;
 }
 
+function matchesConfiguredToken(candidate: string, config: McpHttpConfig) {
+  if (config.urlToken && secureEqual(candidate, config.urlToken)) return true;
+  if (config.bearerToken && secureEqual(candidate, config.bearerToken)) return true;
+  return false;
+}
+
 function isAuthorized(request: Request, config: McpHttpConfig) {
   const url = new URL(request.url);
   const queryToken = url.searchParams.get('token');
-  if (queryToken && config.urlToken && secureEqual(queryToken, config.urlToken)) return true;
+  if (queryToken && matchesConfiguredToken(queryToken, config)) return true;
 
   const authorization = request.headers.get('authorization');
   if (authorization?.startsWith('Bearer ') && config.bearerToken) {
