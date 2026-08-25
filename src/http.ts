@@ -11,6 +11,7 @@ import { createMcpHandler } from '@modelcontextprotocol/server';
 import {
   getAppConfig,
   getHttpConfig,
+  getHttpListenConfig,
   loadLocalEnvFile,
   type HttpConfig,
 } from './config.js';
@@ -21,6 +22,8 @@ export type NodeMcpRequestHandler = (
   res: ServerResponse,
   parsedBody?: unknown,
 ) => Promise<void>;
+
+export type HttpConfigSource = HttpConfig | (() => HttpConfig);
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -35,6 +38,14 @@ export function secureEqual(left: string, right: string) {
 
 export function getRequestUrl(req: IncomingMessage) {
   return new URL(req.url || '/', 'http://portfolio-mcp.local');
+}
+
+function resolveHttpConfig(source: HttpConfigSource) {
+  return typeof source === 'function' ? source() : source;
+}
+
+function configErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'Unknown configuration error.';
 }
 
 export function isAuthorized(req: IncomingMessage, config: HttpConfig) {
@@ -71,6 +82,11 @@ export function applyCommonHeaders(req: IncomingMessage, res: ServerResponse, co
   res.setHeader('Access-Control-Max-Age', '600');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Vary', 'Origin');
+}
+
+function applyStatusHeaders(res: ServerResponse) {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
@@ -116,13 +132,25 @@ export async function readJsonBody(req: IncomingMessage, maxRequestBytes: number
 export async function handleHttpRequest(
   req: IncomingMessage,
   res: ServerResponse,
-  config: HttpConfig,
+  configSource: HttpConfigSource,
   nodeMcpHandler: NodeMcpRequestHandler,
 ) {
-  applyCommonHeaders(req, res, config);
   const requestUrl = getRequestUrl(req);
 
-  if (requestUrl.pathname === '/healthz') {
+  if (req.method === 'GET' && requestUrl.pathname === '/') {
+    applyStatusHeaders(res);
+    sendJson(res, 200, {
+      service: 'portfolio-mcp',
+      status: 'running',
+      health: '/healthz',
+      readiness: '/readyz',
+      mcp: '/mcp',
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && requestUrl.pathname === '/healthz') {
+    applyStatusHeaders(res);
     sendJson(res, 200, {
       ok: true,
       service: 'portfolio-mcp',
@@ -131,10 +159,42 @@ export async function handleHttpRequest(
     return;
   }
 
+  if (req.method === 'GET' && requestUrl.pathname === '/readyz') {
+    applyStatusHeaders(res);
+    try {
+      getAppConfig();
+      resolveHttpConfig(configSource);
+      sendJson(res, 200, {
+        ready: true,
+        service: 'portfolio-mcp',
+      });
+    } catch (error) {
+      sendJson(res, 503, {
+        ready: false,
+        service: 'portfolio-mcp',
+        error: configErrorMessage(error),
+      });
+    }
+    return;
+  }
+
   if (requestUrl.pathname !== '/mcp' && requestUrl.pathname !== '/mcp/') {
     sendJson(res, 404, { error: 'Not found' });
     return;
   }
+
+  let config: HttpConfig;
+  try {
+    config = resolveHttpConfig(configSource);
+  } catch (error) {
+    sendJson(res, 503, {
+      error: 'MCP service is not configured.',
+      detail: configErrorMessage(error),
+    });
+    return;
+  }
+
+  applyCommonHeaders(req, res, config);
 
   const requestOrigin = req.headers.origin;
   if (requestOrigin && !getCorsOrigin(req, config)) {
@@ -193,9 +253,12 @@ export async function handleHttpRequest(
   }
 }
 
-export function createPortfolioHttpServer(config: HttpConfig, nodeMcpHandler: NodeMcpRequestHandler) {
+export function createPortfolioHttpServer(
+  configSource: HttpConfigSource,
+  nodeMcpHandler: NodeMcpRequestHandler,
+) {
   return createServer((req, res) => {
-    void handleHttpRequest(req, res, config, nodeMcpHandler);
+    void handleHttpRequest(req, res, configSource, nodeMcpHandler);
   });
 }
 
@@ -241,8 +304,7 @@ async function listen(server: Server, port: number, host: string) {
 
 export async function startHttpRuntime() {
   loadLocalEnvFile();
-  getAppConfig();
-  const httpConfig = getHttpConfig();
+  const listenConfig = getHttpListenConfig();
 
   const mcpHandler = createMcpHandler(createPortfolioMcpServer, {
     responseMode: 'json',
@@ -254,11 +316,11 @@ export async function startHttpRuntime() {
     onerror: (error) => console.error('[portfolio-mcp] HTTP adapter error', error),
   }) as NodeMcpRequestHandler;
 
-  const server = createPortfolioHttpServer(httpConfig, nodeMcpHandler);
-  await listen(server, httpConfig.port, httpConfig.host);
+  const server = createPortfolioHttpServer(getHttpConfig, nodeMcpHandler);
+  await listen(server, listenConfig.port, listenConfig.host);
 
-  console.error(`[portfolio-mcp] listening on http://${httpConfig.host}:${httpConfig.port}/mcp`);
-  return { server, mcpHandler, httpConfig };
+  console.error(`[portfolio-mcp] listening on http://${listenConfig.host}:${listenConfig.port}/mcp`);
+  return { server, mcpHandler, listenConfig };
 }
 
 async function main() {

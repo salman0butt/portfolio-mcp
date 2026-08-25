@@ -6,9 +6,12 @@ export type AppConfig = {
   blogBucket: string;
 };
 
-export type HttpConfig = {
+export type HttpListenConfig = {
   host: string;
   port: number;
+};
+
+export type HttpConfig = HttpListenConfig & {
   bearerToken: string | null;
   urlToken: string | null;
   allowedOrigins: string[];
@@ -52,13 +55,21 @@ export function getAppConfig(): AppConfig {
   };
 }
 
-export function getHttpConfig(): HttpConfig {
+export function getHttpListenConfig(): HttpListenConfig {
   const rawPort = process.env.PORT?.trim() || '3000';
   const port = Number(rawPort);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error('PORT must be an integer between 1 and 65535.');
   }
 
+  return {
+    host: process.env.HOST?.trim() || '0.0.0.0',
+    port,
+  };
+}
+
+export function getHttpConfig(): HttpConfig {
+  const listenConfig = getHttpListenConfig();
   const bearerToken = optional('PORTFOLIO_MCP_TOKEN');
   const urlToken = optional('PORTFOLIO_MCP_URL_TOKEN');
   if (!bearerToken && !urlToken) {
@@ -83,8 +94,7 @@ export function getHttpConfig(): HttpConfig {
   }
 
   return {
-    host: process.env.HOST?.trim() || '0.0.0.0',
-    port,
+    ...listenConfig,
     bearerToken,
     urlToken,
     allowedOrigins,
