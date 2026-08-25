@@ -15,7 +15,7 @@ import {
   loadLocalEnvFile,
   type HttpConfig,
 } from './config.js';
-import { createPortfolioMcpServer } from './server.js';
+import { createPortfolioMcpServer } from './mcpFactory.js';
 
 export type NodeMcpRequestHandler = (
   req: IncomingMessage,
