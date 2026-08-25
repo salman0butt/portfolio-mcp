@@ -11,12 +11,14 @@ export type HttpListenConfig = {
   port: number;
 };
 
-export type HttpConfig = HttpListenConfig & {
+export type McpHttpConfig = {
   bearerToken: string | null;
   urlToken: string | null;
   allowedOrigins: string[];
   maxRequestBytes: number;
 };
+
+export type HttpConfig = HttpListenConfig & McpHttpConfig;
 
 const DEFAULT_MAX_REQUEST_BYTES = 5 * 1024 * 1024;
 const MIN_TOKEN_LENGTH = 32;
@@ -68,8 +70,7 @@ export function getHttpListenConfig(): HttpListenConfig {
   };
 }
 
-export function getHttpConfig(): HttpConfig {
-  const listenConfig = getHttpListenConfig();
+export function getMcpHttpConfig(): McpHttpConfig {
   const bearerToken = optional('PORTFOLIO_MCP_TOKEN');
   const urlToken = optional('PORTFOLIO_MCP_URL_TOKEN');
   if (!bearerToken && !urlToken) {
@@ -94,10 +95,16 @@ export function getHttpConfig(): HttpConfig {
   }
 
   return {
-    ...listenConfig,
     bearerToken,
     urlToken,
     allowedOrigins,
     maxRequestBytes,
+  };
+}
+
+export function getHttpConfig(): HttpConfig {
+  return {
+    ...getHttpListenConfig(),
+    ...getMcpHttpConfig(),
   };
 }
