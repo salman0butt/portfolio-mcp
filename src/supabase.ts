@@ -3,7 +3,7 @@ import { getAppConfig } from './config.js';
 export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif'] as const;
 export type ImageContentType = (typeof IMAGE_TYPES)[number];
 
-const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 const BLOG_FIELDS = 'id,title,slug,excerpt,content,cover_image_url,category,tags,featured,published,published_at,created_at,updated_at';
 
 export type BlogPost = {
@@ -35,12 +35,31 @@ export type CreateBlogPostInput = {
   published_at?: string;
 };
 
+function looksLikeLegacyJwt(value: string) {
+  const parts = value.split('.');
+  return parts.length === 3 && parts.every(Boolean);
+}
+
+export function buildSupabaseHeaders(secretKey: string, initialHeaders?: HeadersInit) {
+  const headers = new Headers(initialHeaders);
+  headers.set('apikey', secretKey);
+
+  // New sb_secret_* keys are opaque API keys, not JWTs. Supabase requires
+  // them on `apikey` only. Legacy service_role keys are JWTs and still use
+  // Authorization: Bearer in addition to `apikey`.
+  if (looksLikeLegacyJwt(secretKey)) {
+    headers.set('Authorization', `Bearer ${secretKey}`);
+  } else {
+    headers.delete('Authorization');
+  }
+
+  if (!headers.has('Accept')) headers.set('Accept', 'application/json');
+  return headers;
+}
+
 async function supabaseFetch(path: string, init: RequestInit = {}) {
   const { supabaseUrl, supabaseSecretKey } = getAppConfig();
-  const headers = new Headers(init.headers);
-  headers.set('apikey', supabaseSecretKey);
-  headers.set('Authorization', `Bearer ${supabaseSecretKey}`);
-  if (!headers.has('Accept')) headers.set('Accept', 'application/json');
+  const headers = buildSupabaseHeaders(supabaseSecretKey, init.headers);
 
   const response = await fetch(`${supabaseUrl}${path}`, {
     ...init,
@@ -93,6 +112,14 @@ function normalizeObjectPath(value: string) {
 
 function encodeObjectPath(path: string) {
   return path.split('/').map(encodeURIComponent).join('/');
+}
+
+function decodeBase64(value: string) {
+  const encoded = value.replace(/^data:[^;]+;base64,/, '').replace(/\s+/g, '');
+  if (!encoded || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+    throw new Error('Image payload must contain valid base64 data.');
+  }
+  return Buffer.from(encoded, 'base64');
 }
 
 export function getPublicImageUrl(pathValue: string) {
@@ -197,8 +224,7 @@ export async function uploadImage(input: {
   upsert: boolean;
 }) {
   const path = normalizeObjectPath(input.path);
-  const encoded = input.base64.replace(/^data:[^;]+;base64,/, '');
-  const bytes = Buffer.from(encoded, 'base64');
+  const bytes = decodeBase64(input.base64);
 
   if (bytes.length === 0) throw new Error('Decoded image is empty.');
   if (bytes.length > MAX_IMAGE_BYTES) {

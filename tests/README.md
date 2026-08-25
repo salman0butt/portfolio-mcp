@@ -1,0 +1,1 @@
+Runtime regression tests for the standalone MCP service. These tests intentionally cover remote HTTP authentication/CORS/tool scanning and Supabase request-header behavior without making real writes to the production project.

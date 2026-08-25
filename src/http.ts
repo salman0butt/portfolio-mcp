@@ -1,21 +1,43 @@
 import { timingSafeEqual } from 'node:crypto';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from 'node:http';
+import { pathToFileURL } from 'node:url';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler } from '@modelcontextprotocol/server';
-import { getAppConfig, getHttpConfig, type HttpConfig } from './config.js';
+import {
+  getAppConfig,
+  getHttpConfig,
+  loadLocalEnvFile,
+  type HttpConfig,
+} from './config.js';
 import { createPortfolioMcpServer } from './server.js';
 
-function secureEqual(left: string, right: string) {
+export type NodeMcpRequestHandler = (
+  req: IncomingMessage,
+  res: ServerResponse,
+  parsedBody?: unknown,
+) => Promise<void>;
+
+const SHUTDOWN_TIMEOUT_MS = 10_000;
+
+class PayloadTooLargeError extends Error {}
+class InvalidJsonError extends Error {}
+
+export function secureEqual(left: string, right: string) {
   const a = Buffer.from(left);
   const b = Buffer.from(right);
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function getRequestUrl(req: IncomingMessage) {
+export function getRequestUrl(req: IncomingMessage) {
   return new URL(req.url || '/', 'http://portfolio-mcp.local');
 }
 
-function isAuthorized(req: IncomingMessage, config: HttpConfig) {
+export function isAuthorized(req: IncomingMessage, config: HttpConfig) {
   const requestUrl = getRequestUrl(req);
   const queryToken = requestUrl.searchParams.get('token');
   if (queryToken && config.urlToken && secureEqual(queryToken, config.urlToken)) {
@@ -30,20 +52,20 @@ function isAuthorized(req: IncomingMessage, config: HttpConfig) {
   return false;
 }
 
-function getCorsOrigin(req: IncomingMessage, config: HttpConfig) {
+export function getCorsOrigin(req: IncomingMessage, config: HttpConfig) {
   const requestOrigin = req.headers.origin;
   if (config.allowedOrigins.includes('*')) return '*';
   if (!requestOrigin) return null;
   return config.allowedOrigins.includes(requestOrigin) ? requestOrigin : null;
 }
 
-function applyCommonHeaders(req: IncomingMessage, res: ServerResponse, config: HttpConfig) {
+export function applyCommonHeaders(req: IncomingMessage, res: ServerResponse, config: HttpConfig) {
   const corsOrigin = getCorsOrigin(req, config);
   if (corsOrigin) res.setHeader('Access-Control-Allow-Origin', corsOrigin);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
-    'content-type, accept, authorization, mcp-protocol-version, mcp-session-id, last-event-id',
+    'content-type, accept, authorization, mcp-protocol-version, mcp-method, mcp-name, mcp-session-id, last-event-id',
   );
   res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id');
   res.setHeader('Access-Control-Max-Age', '600');
@@ -59,21 +81,45 @@ function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
-const appConfig = getAppConfig();
-const httpConfig = getHttpConfig();
-void appConfig;
+function rejectOversizedContentLength(req: IncomingMessage, maxRequestBytes: number) {
+  const raw = req.headers['content-length'];
+  if (!raw) return false;
+  const contentLength = Number(Array.isArray(raw) ? raw[0] : raw);
+  return Number.isFinite(contentLength) && contentLength > maxRequestBytes;
+}
 
-const mcpHandler = createMcpHandler(createPortfolioMcpServer, {
-  responseMode: 'json',
-  legacy: 'stateless',
-});
+export async function readJsonBody(req: IncomingMessage, maxRequestBytes: number) {
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
 
-const nodeMcpHandler = toNodeHandler(mcpHandler, {
-  onerror: (error) => console.error('[portfolio-mcp] HTTP adapter error', error),
-});
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+    totalBytes += buffer.length;
 
-const server = createServer((req, res) => {
-  applyCommonHeaders(req, res, httpConfig);
+    if (totalBytes > maxRequestBytes) {
+      req.resume();
+      throw new PayloadTooLargeError('MCP request body is too large.');
+    }
+
+    chunks.push(buffer);
+  }
+
+  if (totalBytes === 0) return undefined;
+
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+  } catch {
+    throw new InvalidJsonError('Request body must contain valid JSON.');
+  }
+}
+
+export async function handleHttpRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: HttpConfig,
+  nodeMcpHandler: NodeMcpRequestHandler,
+) {
+  applyCommonHeaders(req, res, config);
   const requestUrl = getRequestUrl(req);
 
   if (requestUrl.pathname === '/healthz') {
@@ -91,7 +137,7 @@ const server = createServer((req, res) => {
   }
 
   const requestOrigin = req.headers.origin;
-  if (requestOrigin && !getCorsOrigin(req, httpConfig)) {
+  if (requestOrigin && !getCorsOrigin(req, config)) {
     sendJson(res, 403, { error: 'Origin not allowed' });
     return;
   }
@@ -108,27 +154,138 @@ const server = createServer((req, res) => {
     return;
   }
 
-  if (!isAuthorized(req, httpConfig)) {
+  if (!isAuthorized(req, config)) {
     res.setHeader('WWW-Authenticate', 'Bearer');
     sendJson(res, 401, { error: 'Unauthorized' });
     return;
   }
 
-  void nodeMcpHandler(req, res);
-});
+  if (req.method === 'POST' && rejectOversizedContentLength(req, config.maxRequestBytes)) {
+    req.resume();
+    sendJson(res, 413, { error: 'Request body too large' });
+    return;
+  }
 
-server.listen(httpConfig.port, httpConfig.host, () => {
-  console.error(
-    `[portfolio-mcp] listening on http://${httpConfig.host}:${httpConfig.port}/mcp`,
-  );
-});
+  try {
+    const parsedBody = req.method === 'POST'
+      ? await readJsonBody(req, config.maxRequestBytes)
+      : undefined;
 
-async function shutdown(signal: string) {
-  console.error(`[portfolio-mcp] received ${signal}; shutting down`);
-  server.close();
-  await mcpHandler.close();
-  process.exit(0);
+    await nodeMcpHandler(req, res, parsedBody);
+  } catch (error) {
+    if (res.headersSent || res.writableEnded) {
+      console.error('[portfolio-mcp] request failed after response started', error);
+      return;
+    }
+
+    if (error instanceof PayloadTooLargeError) {
+      sendJson(res, 413, { error: 'Request body too large' });
+      return;
+    }
+
+    if (error instanceof InvalidJsonError) {
+      sendJson(res, 400, { error: 'Invalid JSON request body' });
+      return;
+    }
+
+    console.error('[portfolio-mcp] HTTP request failed', error);
+    sendJson(res, 500, { error: 'Internal server error' });
+  }
 }
 
-process.on('SIGINT', () => void shutdown('SIGINT'));
-process.on('SIGTERM', () => void shutdown('SIGTERM'));
+export function createPortfolioHttpServer(config: HttpConfig, nodeMcpHandler: NodeMcpRequestHandler) {
+  return createServer((req, res) => {
+    void handleHttpRequest(req, res, config, nodeMcpHandler);
+  });
+}
+
+export async function closeNodeServer(server: Server, timeoutMs = SHUTDOWN_TIMEOUT_MS) {
+  if (!server.listening) return;
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+
+    const timer = setTimeout(() => {
+      server.closeAllConnections?.();
+      finish();
+    }, timeoutMs);
+    timer.unref();
+
+    server.close(() => finish());
+    server.closeIdleConnections?.();
+  });
+}
+
+async function listen(server: Server, port: number, host: string) {
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.off('listening', onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off('error', onError);
+      resolve();
+    };
+
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, host);
+  });
+}
+
+export async function startHttpRuntime() {
+  loadLocalEnvFile();
+  getAppConfig();
+  const httpConfig = getHttpConfig();
+
+  const mcpHandler = createMcpHandler(createPortfolioMcpServer, {
+    responseMode: 'json',
+    legacy: 'stateless',
+    onerror: (error) => console.error('[portfolio-mcp] MCP handler error', error),
+  });
+
+  const nodeMcpHandler = toNodeHandler(mcpHandler, {
+    onerror: (error) => console.error('[portfolio-mcp] HTTP adapter error', error),
+  }) as NodeMcpRequestHandler;
+
+  const server = createPortfolioHttpServer(httpConfig, nodeMcpHandler);
+  await listen(server, httpConfig.port, httpConfig.host);
+
+  console.error(`[portfolio-mcp] listening on http://${httpConfig.host}:${httpConfig.port}/mcp`);
+  return { server, mcpHandler, httpConfig };
+}
+
+async function main() {
+  const { server, mcpHandler } = await startHttpRuntime();
+  let shutdownPromise: Promise<void> | null = null;
+
+  const shutdown = (signal: string) => {
+    if (shutdownPromise) return shutdownPromise;
+
+    shutdownPromise = (async () => {
+      console.error(`[portfolio-mcp] received ${signal}; shutting down`);
+      await closeNodeServer(server);
+      await mcpHandler.close();
+      process.exitCode = 0;
+    })();
+
+    return shutdownPromise;
+  };
+
+  process.once('SIGINT', () => void shutdown('SIGINT'));
+  process.once('SIGTERM', () => void shutdown('SIGTERM'));
+}
+
+const entrypoint = process.argv[1];
+if (entrypoint && import.meta.url === pathToFileURL(entrypoint).href) {
+  void main().catch((error) => {
+    console.error('[portfolio-mcp] failed to start', error);
+    process.exitCode = 1;
+  });
+}
