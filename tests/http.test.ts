@@ -10,7 +10,7 @@ import {
   createPortfolioHttpServer,
   type NodeMcpRequestHandler,
 } from '../src/http.js';
-import { createPortfolioMcpServer } from '../src/server.js';
+import { createPortfolioMcpServer } from '../src/mcpFactory.js';
 
 const bearerToken = 'b'.repeat(64);
 const urlToken = 'u'.repeat(64);
