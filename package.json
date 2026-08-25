@@ -1,6 +1,6 @@
 {
   "name": "portfolio-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "description": "Standalone MCP server for managing the Supabase-backed portfolio engineering blog.",
@@ -13,6 +13,8 @@
     "dev:stdio": "tsx src/stdio.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build",
     "start": "node dist/http.js",
     "start:stdio": "node dist/stdio.js"
   },
