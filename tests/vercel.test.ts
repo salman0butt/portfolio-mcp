@@ -33,6 +33,20 @@ function clearConfigEnv() {
   for (const name of ENV_NAMES) delete process.env[name];
 }
 
+function mcpPost(queryToken: string, body: unknown) {
+  return mcpVercelHandler(
+    new Request(`https://portfolio.example/mcp?token=${queryToken}`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json, text/event-stream',
+        'Content-Type': 'application/json',
+        'Mcp-Protocol-Version': '2025-06-18',
+      },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
 test('Vercel liveness routes do not depend on secrets', async () => {
   const snapshot = snapshotEnv();
   try {
@@ -81,22 +95,38 @@ test('Vercel MCP route enforces readiness and authentication', async () => {
     assert.equal(unauthorized.status, 401);
 
     for (const queryToken of ['u'.repeat(64), 'b'.repeat(64)]) {
-      const response = await mcpVercelHandler(
-        new Request(`https://portfolio.example/mcp?token=${queryToken}`, {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json, text/event-stream',
-            'Content-Type': 'application/json',
-            'Mcp-Protocol-Version': '2025-06-18',
+      const initialize = await mcpPost(queryToken, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-06-18',
+          capabilities: {},
+          clientInfo: {
+            name: 'chatgpt-connector-test',
+            version: '1.0.0',
           },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'tools/list',
-            params: {},
-          }),
-        }),
-      );
+        },
+      });
+
+      assert.equal(initialize.status, 200);
+      const initializeBody = await initialize.text();
+      assert.match(initializeBody, /protocolVersion/);
+      assert.match(initializeBody, /salman-portfolio-mcp/);
+
+      const initialized = await mcpPost(queryToken, {
+        jsonrpc: '2.0',
+        method: 'notifications/initialized',
+        params: {},
+      });
+      assert.ok([200, 202, 204].includes(initialized.status));
+
+      const response = await mcpPost(queryToken, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/list',
+        params: {},
+      });
 
       assert.equal(response.status, 200);
       const body = await response.text();
