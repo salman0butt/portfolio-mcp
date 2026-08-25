@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import { getAppConfig, getMcpHttpConfig, type McpHttpConfig } from './config.js';
-import { createPortfolioMcpServer } from './server.js';
+import { createPortfolioMcpServer } from './mcpFactory.js';
 
 const mcpHandler = createMcpHandler(createPortfolioMcpServer, {
   responseMode: 'json',
