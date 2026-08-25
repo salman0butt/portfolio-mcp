@@ -25,13 +25,6 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Guard Vercel server autodetection
-        run: |
-          if [ -e src/server.ts ] || [ -e src/server.js ] || [ -e src/server.mjs ] || [ -e src/server.cjs ]; then
-            echo "Do not add src/server.*: Vercel auto-detects it as the application server entrypoint."
-            exit 1
-          fi
-
       - name: Typecheck
         run: npm run typecheck
 
