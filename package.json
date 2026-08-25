@@ -15,8 +15,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
     "check": "npm run typecheck && npm test && npm run build",
-    "start": "node dist/http.js",
-    "start:stdio": "node dist/stdio.js"
+    "start": "node dist/src/http.js",
+    "start:stdio": "node dist/src/stdio.js"
   },
   "dependencies": {
     "@modelcontextprotocol/node": "^2.0.0",
